@@ -81,6 +81,8 @@ let currentState = {
 	lastUpdate: Date.now()
 };
 
+const resyncThreshold = 0.75
+
 let clients = {};
 
 function serverPlaybackSyncTime(){
@@ -180,7 +182,7 @@ app.get('/syncCheck', (req, res) => {
 			console.log('callback requestSyncData for ', key, data);
 
 			//re-sync
-			if(Math.abs(clientSyncData.offset)> 0.5 && !currentState.paused){
+			if(Math.abs(clientSyncData.offset)> resyncThreshold && !currentState.paused){
 				console.log('resyncing client ', key);
 				socket.emit('forceSync', {serverTime: serverPlaybackSyncTime()});
 			}
