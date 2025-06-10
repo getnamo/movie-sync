@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<title>Synced Movie</title>
+		<script src="/socket.io/socket.io.js"></script>
+	</head>
+	<body>
+		<h1>Synchronized Movie</h1>
+		<video id="video" width="640" controls>
+			<source src="/movie.mp4" type="video/mp4">
+		</video>
+
+		<h2>Upload a New Video</h2>
+		<input type="file" id="uploadInput" accept="video/*">
+		<button id="uploadBtn">Set Video</button>
+
+		<script>
+			const socket = io();
+			const video = document.getElementById('video');
+			let isSyncing = false;
+			let syncTimeout = null;
+
+			function startSyncGuard() {
+				isSyncing = true;
+				clearTimeout(syncTimeout);
+				syncTimeout = setTimeout(() => isSyncing = false, 250);
+			}
+
+			socket.on('syncState', (state) => {
+				startSyncGuard();
+				video.currentTime = state.paused
+					? state.currentTime
+					: state.currentTime + (Date.now() - state.lastUpdate) / 1000;
+				state.paused ? video.pause() : video.play();
+			});
+
+			socket.on('play', (time) => {
+				startSyncGuard();
+				video.currentTime = time;
+				video.play();
+			});
+
+			socket.on('pause', (time) => {
+				startSyncGuard();
+				video.currentTime = time;
+				video.pause();
+			});
+
+			socket.on('seek', (time) => {
+				startSyncGuard();
+				video.currentTime = time;
+			});
+
+			socket.on('videoChanged', () => {
+				startSyncGuard();
+				video.pause();
+				video.src = '/movie.mp4?' + Date.now(); // force reload with cache-busting
+				video.load();
+				video.currentTime = 0;
+			});
+
+			video.addEventListener('play', () => {
+				if (!isSyncing) socket.emit('play', video.currentTime);
+			});
+
+			video.addEventListener('pause', () => {
+				if (!isSyncing) socket.emit('pause', video.currentTime);
+			});
+
+			video.addEventListener('seeked', () => {
+				if (!isSyncing) socket.emit('seek', video.currentTime);
+			});
+
+			document.getElementById('uploadBtn').addEventListener('click', () => {
+				const input = document.getElementById('uploadInput');
+				if (!input.files.length) return alert('Choose a file first.');
+
+				const formData = new FormData();
+				formData.append('video', input.files[0]);
+
+				fetch('/upload', {
+					method: 'POST',
+					body: formData
+				}).then(res => {
+					if (res.ok) {
+						console.log('Uploaded new video');
+					} else {
+						alert('Upload failed.');
+					}
+				});
+			});
+		</script>
+
+	</body>
+</html>
