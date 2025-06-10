@@ -83,6 +83,15 @@ let currentState = {
 
 let clients = {};
 
+function serverPlaybackSyncTime(){
+	if(currentState.paused){
+		return currentState.currentTime;
+	}
+
+	const playedTime = (Date.now() - currentState.lastUpdate)/1000;
+	return currentState.currentTime + playedTime;
+}
+
 io.on('connection', (socket) => {
 	const clientId = socket.id.slice(0,4);
 	const clientIp =
@@ -93,6 +102,8 @@ io.on('connection', (socket) => {
 
 	console.log(`${clientId} <${clientIp}> client connected (${Object.keys(clients).length})`);
 
+	socket.emit('clientId', clientId);
+
 	// Send current playback state
 	socket.emit('syncState', currentState);
 
@@ -102,6 +113,7 @@ io.on('connection', (socket) => {
 	});
 
 	socket.on('play', (time) => {
+		console.log(`received play from ${clientId}`);
 		currentState = {
 			paused: false,
 			currentTime: time,
@@ -111,6 +123,7 @@ io.on('connection', (socket) => {
 	});
 
 	socket.on('pause', (time) => {
+		console.log(`received pause from ${clientId}`);
 		currentState = {
 			paused: true,
 			currentTime: time,
@@ -120,10 +133,65 @@ io.on('connection', (socket) => {
 	});
 
 	socket.on('seek', (time) => {
+		console.log(`received seek from ${clientId}`);
 		currentState.currentTime = time;
 		currentState.lastUpdate = Date.now();
 		socket.broadcast.emit('seek', time);
 	});
+
+	//server time (might not be necessary)
+	socket.on('requestSyncTime', ()=>{
+		return serverPlaybackSyncTime();
+	});
+
+	socket.on('requestSync', () => {
+		socket.emit('syncState', currentState);
+	});
+});
+
+let syncData = {};
+
+// Endpoint: get current playback time for every client
+app.get('/syncCheck', (req, res) => {
+	//clear last sync data
+	syncData = {}
+
+	console.log('obtaining sync data');
+
+	Object.keys(clients).forEach(key=>{
+		const socket = clients[key];
+
+		console.log('emit requestSyncData for ', key);
+
+		const then = Date.now();
+
+		//emit to socket
+		socket.emit('requestSyncData', data=>{
+			const now = Date.now();
+
+			const clientSyncData = {
+				time: data.currentTime,
+				latency: now-then,
+				offset: data.currentTime - serverPlaybackSyncTime()
+			}
+
+			syncData[key] = clientSyncData;
+
+			console.log('callback requestSyncData for ', key, data);
+
+			//re-sync
+			if(Math.abs(clientSyncData.offset)> 0.5 && !currentState.paused){
+				console.log('resyncing client ', key);
+				socket.emit('forceSync', {serverTime: serverPlaybackSyncTime()});
+			}
+			
+
+			//When we've obtained all, respond with full json
+			if(Object.keys(syncData).length == Object.keys(clients).length){
+				res.json(syncData);
+			}
+		});
+	})
 });
 
 // Start server

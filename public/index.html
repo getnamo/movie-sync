@@ -2,11 +2,12 @@
 <html lang="en">
 	<head>
 		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
 		<title>Synced Movie</title>
 		<script src="/socket.io/socket.io.js"></script>
 	</head>
 	<body>
-		<h1>Now Playing: <span id="videoTitle">movie.mp4</span></h1>
+		<h1><span id="clientId">(Unknown User)</span> Now Playing: <span id="videoTitle">movie.mp4</span></h1>
 		<video id="video" controls style="width: 100%; height: auto; display: block; max-width: 100%;">
 			<source src="/movie.mp4" type="video/mp4">
 		</video>
@@ -24,15 +25,58 @@
 			const socket = io();
 			const video = document.getElementById('video');
 			const title = document.getElementById('videoTitle');
+			const clientIdElement = document.getElementById('clientId');
 			const selector = document.getElementById('videoSelector');
 
+			video.muted = true;
+
+			const isPhone = /iPhone|Android.*Mobile|Windows Phone|webOS|BlackBerry|Opera Mini|IEMobile/i.test(navigator.userAgent);
 			let isSyncing = false;
 			let syncTimeout = null;
+			let syncReady = false;
+			let ignoreNextSeek = false;
+			let clientId = 'unknown';
+			let pausedByVisibilityChange = false;
+
+			// Track when the page becomes hidden (e.g. screen off or app switch)
+			document.addEventListener('visibilitychange', () => {
+				if (document.hidden && !video.paused) {
+					pausedByVisibilityChange = true;
+				}
+			});
+
+			function setupPlaybackListeners() {
+				//if (syncReady) return;
+				syncReady = true;
+
+				video.addEventListener('play', () => {
+					if (!isSyncing) socket.emit('play', video.currentTime);
+				});
+
+				video.addEventListener('pause', () => {
+					if(!pausedByVisibilityChange && 
+						!isSyncing){
+						socket.emit('pause', video.currentTime);
+					}
+				});
+
+				video.addEventListener('seeked', () => {
+					/*if(ignoreNextSeek){
+						ignoreNextSeek = false;
+						return;
+					}*/
+					
+					console.log('seeking to ', video.currentTime);
+					if (!isSyncing) socket.emit('seek', video.currentTime);
+				});
+			}
+
+			setupPlaybackListeners();
 
 			function startSyncGuard() {
 				isSyncing = true;
 				clearTimeout(syncTimeout);
-				syncTimeout = setTimeout(() => isSyncing = false, 250);
+				syncTimeout = setTimeout(() => isSyncing = false, 500);
 			}
 
 			// Load current video and list
@@ -97,13 +141,31 @@
 				xhr.send(formData);
 			});
 
+			socket.on('clientId', newId =>{
+				clientId = newId;
+				clientIdElement.textContent = `(${clientId})`;
+			})
+
 			// Sync playback
 			socket.on('syncState', (state) => {
+				if (!syncReady) return; // wait until user interaction
+
+				console.log('syncing to ', state);
+
 				startSyncGuard();
 				video.currentTime = state.paused
 					? state.currentTime
 					: state.currentTime + (Date.now() - state.lastUpdate) / 1000;
+
 				state.paused ? video.pause() : video.play();
+			});
+
+			socket.on('forceSync', (state)=>{
+				console.log('forceSync request ', state);
+
+				if (!syncReady) return;
+				console.log('force syncing to ', state);
+				video.currentTime  = state.serverTime;
 			});
 
 			socket.on('play', time => {
@@ -118,6 +180,10 @@
 				startSyncGuard(); video.currentTime = time;
 			});
 
+			socket.on('requestSyncData', callback =>{
+				callback({currentTime: video.currentTime});
+			});
+
 			socket.on('videoChanged', (filename) => {
 				startSyncGuard();
 				title.textContent = filename;
@@ -130,10 +196,24 @@
 				updateDropdown(videos);
 			});
 
-			// Emit user actions
-			video.addEventListener('play', () => { if (!isSyncing) socket.emit('play', video.currentTime); });
-			video.addEventListener('pause', () => { if (!isSyncing) socket.emit('pause', video.currentTime); });
-			video.addEventListener('seeked', () => { if (!isSyncing) socket.emit('seek', video.currentTime); });
+			// Handle first user interaction to allow autoplay and enable sync
+			video.addEventListener('click', () => {
+				if (syncReady) return;
+
+				setupPlaybackListeners();
+				socket.emit('requestSync');
+
+				/*setTimeout(()=>{
+					// Allow playback and attach emit listeners
+					setupPlaybackListeners();
+
+					//pause again
+					video.pause();
+					// Fetch current server state again (optional)
+					socket.emit('requestSync');
+				}, 300);*/
+
+			});
 
 		</script>
 
