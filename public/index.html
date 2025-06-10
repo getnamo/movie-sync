@@ -6,8 +6,8 @@
 		<script src="/socket.io/socket.io.js"></script>
 	</head>
 	<body>
-		<h1>Synchronized Movie</h1>
-		<video id="video" width="640" controls>
+		<h1>Now Playing: <span id="videoTitle">movie.mp4</span></h1>
+		<video id="video" controls style="width: 100%; height: auto; display: block; max-width: 100%;">
 			<source src="/movie.mp4" type="video/mp4">
 		</video>
 
@@ -17,9 +17,15 @@
 
 		<progress id="uploadProgress" value="0" max="100" style="width: 300px; display: none;"></progress>
 
+		<h3>Select Video:</h3>
+		<select id="videoSelector"></select>
+
 		<script>
 			const socket = io();
 			const video = document.getElementById('video');
+			const title = document.getElementById('videoTitle');
+			const selector = document.getElementById('videoSelector');
+
 			let isSyncing = false;
 			let syncTimeout = null;
 
@@ -29,6 +35,69 @@
 				syncTimeout = setTimeout(() => isSyncing = false, 250);
 			}
 
+			// Load current video and list
+			fetch('/current-video').then(res => res.json()).then(data => {
+				if (data.filename) {
+					video.src = '/movie.mp4?' + Date.now();
+					title.textContent = data.filename;
+				}
+			});
+
+			fetch('/video-list').then(res => res.json()).then(data => {
+				updateDropdown(data.videos);
+			});
+
+			function updateDropdown(videos) {
+				selector.innerHTML = '';
+				videos.forEach(name => {
+					const option = document.createElement('option');
+					option.value = name;
+					option.textContent = name;
+					selector.appendChild(option);
+				});
+			}
+
+			// Dropdown change triggers video switch
+			selector.addEventListener('change', () => {
+				const selected = selector.value;
+				fetch('/set-video', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ filename: selected })
+				});
+			});
+
+			// Upload logic
+			document.getElementById('uploadBtn').addEventListener('click', () => {
+				const input = document.getElementById('uploadInput');
+				const progress = document.getElementById('uploadProgress');
+
+				if (!input.files.length) return alert('Choose a file first.');
+				const file = input.files[0];
+				const formData = new FormData();
+				formData.append('video', file);
+
+				const xhr = new XMLHttpRequest();
+				xhr.open('POST', '/upload', true);
+				progress.style.display = 'inline-block';
+				progress.value = 0;
+
+				xhr.upload.onprogress = (event) => {
+					if (event.lengthComputable) {
+						progress.value = (event.loaded / event.total) * 100;
+					}
+				};
+
+				xhr.onload = () => progress.style.display = 'none';
+				xhr.onerror = () => {
+					alert('Upload error.');
+					progress.style.display = 'none';
+				};
+
+				xhr.send(formData);
+			});
+
+			// Sync playback
 			socket.on('syncState', (state) => {
 				startSyncGuard();
 				video.currentTime = state.paused
@@ -37,85 +106,35 @@
 				state.paused ? video.pause() : video.play();
 			});
 
-			socket.on('play', (time) => {
-				startSyncGuard();
-				video.currentTime = time;
-				video.play();
+			socket.on('play', time => {
+				startSyncGuard(); video.currentTime = time; video.play();
 			});
 
-			socket.on('pause', (time) => {
-				startSyncGuard();
-				video.currentTime = time;
-				video.pause();
+			socket.on('pause', time => {
+				startSyncGuard(); video.currentTime = time; video.pause();
 			});
 
-			socket.on('seek', (time) => {
-				startSyncGuard();
-				video.currentTime = time;
+			socket.on('seek', time => {
+				startSyncGuard(); video.currentTime = time;
 			});
 
-			socket.on('videoChanged', () => {
+			socket.on('videoChanged', (filename) => {
 				startSyncGuard();
-				video.pause();
-				video.src = '/movie.mp4?' + Date.now(); // force reload with cache-busting
+				title.textContent = filename;
+				video.src = '/movie.mp4?' + Date.now();
 				video.load();
 				video.currentTime = 0;
 			});
 
-			video.addEventListener('play', () => {
-				if (!isSyncing) socket.emit('play', video.currentTime);
+			socket.on('videoListChanged', (videos) => {
+				updateDropdown(videos);
 			});
 
-			video.addEventListener('pause', () => {
-				if (!isSyncing) socket.emit('pause', video.currentTime);
-			});
+			// Emit user actions
+			video.addEventListener('play', () => { if (!isSyncing) socket.emit('play', video.currentTime); });
+			video.addEventListener('pause', () => { if (!isSyncing) socket.emit('pause', video.currentTime); });
+			video.addEventListener('seeked', () => { if (!isSyncing) socket.emit('seek', video.currentTime); });
 
-			video.addEventListener('seeked', () => {
-				if (!isSyncing) socket.emit('seek', video.currentTime);
-			});
-
-			document.getElementById('uploadBtn').addEventListener('click', () => {
-				const input = document.getElementById('uploadInput');
-				const progress = document.getElementById('uploadProgress');
-
-				if (!input.files.length) return alert('Choose a file first.');
-
-				const file = input.files[0];
-				const formData = new FormData();
-				formData.append('video', file);
-
-				const xhr = new XMLHttpRequest();
-				xhr.open('POST', '/upload', true);
-
-				// Show progress bar
-				progress.style.display = 'inline-block';
-				progress.value = 0;
-
-				// Track progress
-				xhr.upload.onprogress = (event) => {
-					if (event.lengthComputable) {
-						const percent = (event.loaded / event.total) * 100;
-						progress.value = percent;
-					}
-				};
-
-				// Hide on complete
-				xhr.onload = () => {
-					if (xhr.status === 200) {
-						console.log('Upload complete');
-					} else {
-						alert('Upload failed.');
-					}
-					progress.style.display = 'none';
-				};
-
-				xhr.onerror = () => {
-					alert('Upload error.');
-					progress.style.display = 'none';
-				};
-
-				xhr.send(formData);
-			});
 		</script>
 
 	</body>

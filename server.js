@@ -1,48 +1,105 @@
 const express = require('express');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 const socketIO = require('socket.io');
+const multer = require('multer');
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIO(server);
-const multer = require('multer');
 
-app.use(express.static(path.join(__dirname, 'public')));
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+	fs.mkdirSync(uploadDir);
+}
 
-// Store uploads in 'uploads/' and overwrite 'movie.mp4'
+// Track uploaded videos and currently active video
+let uploadedFiles = fs.readdirSync(uploadDir).filter(f => f.endsWith('.mp4'));
+let currentFilename = uploadedFiles[0] || null;
+
+// Multer config to save files with original name
 const storage = multer.diskStorage({
-	destination: (req, file, cb) => cb(null, './uploads'),
-	filename: (req, file, cb) => cb(null, 'movie.mp4')
+	destination: (req, file, cb) => cb(null, uploadDir),
+	filename: (req, file, cb) => cb(null, file.originalname)
 });
 const upload = multer({ storage });
 
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Middleware
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/uploads', express.static(uploadDir));
+app.use(express.json());
 
-// Replace video
-app.post('/upload', upload.single('video'), (req, res) => {
-	console.log('Video uploaded:', req.file);
-	io.emit('videoChanged');
+// Endpoint: Get current video
+app.get('/current-video', (req, res) => {
+	res.json({ filename: currentFilename });
+});
+
+// Endpoint: Get video list
+app.get('/video-list', (req, res) => {
+	res.json({ videos: uploadedFiles });
+});
+
+// Endpoint: Set active video
+app.post('/set-video', (req, res) => {
+	const { filename } = req.body;
+	if (!uploadedFiles.includes(filename)) return res.sendStatus(404);
+
+	currentFilename = filename;
+	io.emit('videoChanged', currentFilename);
 	res.sendStatus(200);
 });
 
-// Serve video dynamically
+// Endpoint: Stream currently selected video
 app.get('/movie.mp4', (req, res) => {
-	const filePath = path.join(__dirname, 'uploads/movie.mp4');
+	if (!currentFilename) return res.sendStatus(404);
+	const filePath = path.join(uploadDir, currentFilename);
 	res.sendFile(filePath);
 });
 
+// Endpoint: Upload new video
+app.post('/upload', upload.single('video'), (req, res) => {
+	const uploadedName = req.file.originalname;
+
+	if (!uploadedFiles.includes(uploadedName)) {
+		uploadedFiles.push(uploadedName);
+	}
+	currentFilename = uploadedName;
+
+	console.log('Video uploaded:', uploadedName);
+
+	io.emit('videoChanged', uploadedName);
+	io.emit('videoListChanged', uploadedFiles);
+
+	res.sendStatus(200);
+});
+
+// Playback sync logic
 let currentState = {
 	paused: true,
 	currentTime: 0,
 	lastUpdate: Date.now()
 };
 
-io.on('connection', (socket) => {
-	console.log('New client connected');
+let clients = {};
 
-	// Send current state to new client
+io.on('connection', (socket) => {
+	const clientId = socket.id.slice(0,4);
+	const clientIp =
+		socket.handshake.headers['x-forwarded-for']?.split(',')[0].trim() || // behind proxy
+		socket.handshake.address; // direct connection fallback
+
+	clients[clientId] = socket;
+
+	console.log(`${clientId} <${clientIp}> client connected (${Object.keys(clients).length})`);
+
+	// Send current playback state
 	socket.emit('syncState', currentState);
+
+	socket.on('disconnect', ()=>{
+		delete clients[clientId];
+		console.log(`${clientId} <${clientIp}> client disconnected (${Object.keys(clients).length})`);
+	});
 
 	socket.on('play', (time) => {
 		currentState = {
@@ -69,6 +126,7 @@ io.on('connection', (socket) => {
 	});
 });
 
+// Start server
 server.listen(3000, () => {
 	console.log('Server running on http://localhost:3000');
 });
