@@ -1,6 +1,6 @@
 # Movie-Sync
 
-A simple nodejs server that hosts a video that all clients see and sync playback with. Useful for a watch party.
+A simple nodejs server that hosts a video that all clients see and sync playback with. Useful for a watch party. Works on any platform with a webbrowser supporting video element and js.
 
 # How to use
 
