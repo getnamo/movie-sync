@@ -81,6 +81,8 @@ let currentState = {
 	lastUpdate: Date.now()
 };
 
+let exclusiveControlId = null;
+
 const resyncThreshold = 0.75
 
 let clients = {};
@@ -110,11 +112,28 @@ io.on('connection', (socket) => {
 	socket.emit('syncState', currentState);
 
 	socket.on('disconnect', ()=>{
+		if(exclusiveControlId == socket.id){
+			exclusiveControlId = null;
+		}
 		delete clients[clientId];
 		console.log(`${clientId} <${clientIp}> client disconnected (${Object.keys(clients).length})`);
 	});
 
+	const allowedExclusiveAction = (action) =>{
+		if(exclusiveControlId){
+			if(exclusiveControlId != socket.id){
+				console.log(clientId, `attempted ${action}, but was blocked.`);
+				return false;;
+			}
+		}
+		return true;
+	}
+
 	socket.on('play', (time) => {
+		if(!allowedExclusiveAction('play')){
+			return;
+		}
+
 		console.log(`received play from ${clientId}`);
 		currentState = {
 			paused: false,
@@ -125,6 +144,10 @@ io.on('connection', (socket) => {
 	});
 
 	socket.on('pause', (time) => {
+		if(!allowedExclusiveAction('pause')){
+			return;
+		}
+
 		console.log(`received pause from ${clientId}`);
 		currentState = {
 			paused: true,
@@ -135,6 +158,10 @@ io.on('connection', (socket) => {
 	});
 
 	socket.on('seek', (time) => {
+		if(!allowedExclusiveAction('seek')){
+			return;
+		}
+
 		console.log(`received seek from ${clientId}`);
 		currentState.currentTime = time;
 		currentState.lastUpdate = Date.now();
@@ -148,6 +175,27 @@ io.on('connection', (socket) => {
 
 	socket.on('requestSync', () => {
 		socket.emit('syncState', currentState);
+	});
+
+	socket.on('toggleExclusiveControl', callback =>{
+		if(exclusiveControlId){
+			if(socket.id == exclusiveControlId){
+				exclusiveControlId = null;
+				console.log(exclusiveControlId, ' has released exclusive control.');
+				//succeeded to release
+				callback(true, false);
+			}
+			else{
+				//failed to acquire
+				callback(false, false);
+			}
+		}
+		else{
+			exclusiveControlId = socket.id;
+			console.log(exclusiveControlId, ' has taken exclusive control.');
+			//succeeded to acquire
+			callback(true, true);
+		}
 	});
 });
 

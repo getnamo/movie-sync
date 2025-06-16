@@ -21,12 +21,15 @@
 		<h3>Select Video:</h3>
 		<select id="videoSelector"></select>
 
+		<button id="exclusiveControl">Request Exclusive Control</button>
+
 		<script>
 			const socket = io();
 			const video = document.getElementById('video');
 			const title = document.getElementById('videoTitle');
 			const clientIdElement = document.getElementById('clientId');
 			const selector = document.getElementById('videoSelector');
+			const exclusiveControl = document.getElementById('exclusiveControl');
 
 			video.muted = true;
 
@@ -108,6 +111,20 @@
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ filename: selected })
+				});
+			});
+
+			exclusiveControl.addEventListener('click', () => {
+				console.log('clicked exclusive');
+				socket.emit('toggleExclusiveControl', (success, didAcquire)=>{
+					if(success){
+						if(didAcquire){
+							exclusiveControl.innerHTML = 'Release Exclusive Control';
+						}
+						else{
+							exclusiveControl.innerHTML = 'Request Exclusive Control';
+						}
+					}
 				});
 			});
 
