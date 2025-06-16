@@ -175,6 +175,22 @@
 					: state.currentTime + (Date.now() - state.lastUpdate) / 1000;
 
 				state.paused ? video.pause() : video.play();
+
+				if(state.exclusiveControlAvailable){
+					exclusiveControl.innerHTML = 'Request Exclusive Control';
+				}
+				else{
+					exclusiveControl.innerHTML = 'Control Not Available';
+				}
+			});
+
+			socket.on('exclusiveControlAvailable', isAvailable =>{
+				if(isAvailable){
+					exclusiveControl.innerHTML = 'Request Exclusive Control';
+				}
+				else{
+					exclusiveControl.innerHTML = 'Control Not Available';
+				}
 			});
 
 			socket.on('forceSync', (state)=>{

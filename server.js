@@ -74,14 +74,17 @@ app.post('/upload', upload.single('video'), (req, res) => {
 	res.sendStatus(200);
 });
 
+
+
+let exclusiveControlId = null;
+
 // Playback sync logic
 let currentState = {
 	paused: true,
 	currentTime: 0,
-	lastUpdate: Date.now()
+	lastUpdate: Date.now(),
+	exclusiveControlAvailable:true
 };
-
-let exclusiveControlId = null;
 
 const resyncThreshold = 0.75
 
@@ -138,7 +141,8 @@ io.on('connection', (socket) => {
 		currentState = {
 			paused: false,
 			currentTime: time,
-			lastUpdate: Date.now()
+			lastUpdate: Date.now(),
+			exclusiveControlAvailable: currentState.exclusiveControlAvailable
 		};
 		socket.broadcast.emit('play', time);
 	});
@@ -152,7 +156,8 @@ io.on('connection', (socket) => {
 		currentState = {
 			paused: true,
 			currentTime: time,
-			lastUpdate: Date.now()
+			lastUpdate: Date.now(),
+			exclusiveControlAvailable: currentState.exclusiveControlAvailable
 		};
 		socket.broadcast.emit('pause', time);
 	});
@@ -184,6 +189,7 @@ io.on('connection', (socket) => {
 				console.log(exclusiveControlId, ' has released exclusive control.');
 				//succeeded to release
 				callback(true, false);
+				socket.broadcast.emit('exclusiveControlAvailable', true);
 			}
 			else{
 				//failed to acquire
@@ -195,7 +201,9 @@ io.on('connection', (socket) => {
 			console.log(exclusiveControlId, ' has taken exclusive control.');
 			//succeeded to acquire
 			callback(true, true);
+			socket.broadcast.emit('exclusiveControlAvailable', false);
 		}
+		currentState.exclusiveControlAvailable = exclusiveControlId == null;
 	});
 });
 
